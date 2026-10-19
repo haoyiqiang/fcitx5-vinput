@@ -30,11 +30,8 @@ from textual.widgets import (
     Button,
     DataTable,
     Footer,
-    Header,
     Input,
     Label,
-    ListItem,
-    ListView,
     RichLog,
     Select,
     Static,
@@ -243,7 +240,6 @@ class StatusSection(Section):
     KEY = "status"
 
     def compose(self) -> ComposeResult:
-        yield Static(self.TITLE, classes="section-title")
         yield Static(id="status-body")
 
     async def on_mount(self) -> None:
@@ -299,7 +295,6 @@ class TableSection(Section):
     ACTIONS: tuple[tuple[str, str], ...] = ()
 
     def compose(self) -> ComposeResult:
-        yield Static(self.TITLE, classes="section-title")
         yield DataTable(id="table", cursor_type="row", zebra_stripes=True)
         with Horizontal(classes="buttons"):
             for label, action_id in self.ACTIONS:
@@ -732,7 +727,6 @@ class AudioSection(Section):
     KEY = "audio"
 
     def compose(self) -> ComposeResult:
-        yield Static(self.TITLE, classes="section-title")
         yield Static("修改后保存会重启 daemon。", classes="hint")
         with VerticalScroll(classes="form-body"):
             yield Label("录音设备")
@@ -818,7 +812,6 @@ class KeysSection(Section):
     KEY = "keys"
 
     def compose(self) -> ComposeResult:
-        yield Static(self.TITLE, classes="section-title")
         yield Static("修改后保存会重启 fcitx5。值示例：Alt_R、Control+grave、Shift_R",
                      classes="hint")
         with VerticalScroll(classes="form-body"):
@@ -905,7 +898,6 @@ class DaemonSection(Section):
     KEY = "daemon"
 
     def compose(self) -> ComposeResult:
-        yield Static(self.TITLE, classes="section-title")
         yield Static(id="daemon-body")
         with Horizontal(classes="buttons"):
             yield Button("启动", id="start")
@@ -955,7 +947,6 @@ class LogSection(Section):
         self._follow_worker = None
 
     def compose(self) -> ComposeResult:
-        yield Static(self.TITLE, classes="section-title")
         yield RichLog(id="log", wrap=True, markup=False, highlight=True)
 
     def on_show(self) -> None:
@@ -989,6 +980,11 @@ class LogSection(Section):
 
 # ------------------------------------------------------------------- app ----
 
+TAB_LABELS = {
+    "status": "状态", "provider": "ASR", "llm": "LLM", "scene": "场景",
+    "adapter": "适配器", "audio": "音频", "keys": "键位", "daemon": "守护", "logs": "日志",
+}
+
 SECTIONS: list[tuple[str, str, type[Section]]] = [
     ("status", "状态", StatusSection),
     ("provider", "ASR 提供商", ProviderSection),
@@ -1006,24 +1002,27 @@ class VinputTUI(App):
     TITLE = "fcitx5-vinput"
     SUB_TITLE = "Omarchy dictation configuration"
     CSS = """
-    Horizontal { height: 1fr; }
-    #sidebar { width: 24; height: 1fr; border-right: solid $panel; }
-    #nav { height: 1fr; }
+    Screen { background: $surface; }
+    #topbar { height: 3; background: $panel; padding: 0 1; }
+    #brand { width: auto; height: 3; content-align: left middle; text-style: bold; padding: 0 2 0 0; color: $accent; }
+    .tab { height: 3; min-width: 0; border: none; background: $panel; color: $text-muted; padding: 0 1; margin: 0; }
+    .tab:hover { background: $boost; color: $text; }
+    .tab.active { background: $primary; color: $text; text-style: bold; }
     #content { width: 1fr; height: 1fr; }
-    #pane { width: 1fr; height: 1fr; padding: 1 2; }
+    #pane { width: 1fr; height: 1fr; border: solid $panel; border-title-color: $accent; padding: 0 1; }
     Section { height: 1fr; }
-    .section-title { text-style: bold; padding-bottom: 1; }
     .hint { color: $text-muted; padding-bottom: 1; }
     .buttons { height: auto; padding-top: 1; }
-    .buttons Button { margin-right: 1; }
+    .buttons Button { margin-right: 1; min-width: 10; border: none; background: $panel; }
+    .buttons Button:hover { background: $boost; }
     DataTable { height: auto; max-height: 1fr; }
     .form-body { height: auto; max-height: 70%; }
     .field-label { padding-top: 1; }
     .field-area { height: 6; }
     Input, Select { height: 3; }
-    .modal { width: 70; height: auto; padding: 1 2; background: $surface; border: thick $primary; }
+    .modal { width: 70; height: auto; padding: 0 1; background: $surface; border: thick $primary; }
     .modal-wide { width: 90; height: auto; }
-    .modal-title { text-style: bold; padding-bottom: 1; }
+    .modal-title { text-style: bold; padding-bottom: 1; color: $accent; }
     .modal-buttons { height: auto; padding-top: 1; align: right middle; }
     .modal-buttons Button { margin-left: 1; }
     """
@@ -1032,7 +1031,8 @@ class VinputTUI(App):
         Binding("r", "reload_section", "刷新"),
         Binding("tab", "focus_next", "焦点", show=True),
         Binding("shift+tab", "focus_previous", "上一个", show=False),
-    ]
+    ] + [Binding(str(i), f"goto('{key}')", name, show=False)
+         for i, (key, name, _) in enumerate(SECTIONS, 1)]
 
     def __init__(self) -> None:
         super().__init__()
@@ -1040,32 +1040,33 @@ class VinputTUI(App):
         self.current_section = SECTIONS[0][0] if SECTIONS else ""
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
-        with Horizontal():
-            with Vertical(id="sidebar"):
-                yield ListView(
-                    *[ListItem(Label(name), id=key) for key, name, _ in SECTIONS],
-                    id="nav",
-                )
-            with Vertical(id="content"):
-                yield Vertical(id="pane")
+        with Horizontal(id="topbar"):
+            yield Static("fcitx5-vinput", id="brand")
+            for index, (key, name, _) in enumerate(SECTIONS, 1):
+                yield Button(f"{index} {TAB_LABELS.get(key, name)}", id=f"tab-{key}", classes="tab")
+        with Vertical(id="content"):
+            yield Vertical(id="pane")
         yield Footer()
 
     async def on_mount(self) -> None:
-        self.query_one("#nav", ListView).focus()
         await self.show_section(SECTIONS[0][0])
 
-    @on(ListView.Highlighted)
-    async def on_highlight(self, event: ListView.Highlighted) -> None:
-        if event.item and event.item.id:
-            await self.show_section(event.item.id)
+    @on(Button.Pressed, ".tab")
+    async def on_tab(self, event: Button.Pressed) -> None:
+        await self.show_section(event.button.id.removeprefix("tab-"))
+
+    async def action_goto(self, key: str) -> None:
+        await self.show_section(key)
 
     async def show_section(self, key: str) -> None:
         entry = next((s for s in SECTIONS if s[0] == key), None)
         if entry is None:
             return
         self.current_section = key
+        for tab in self.query(".tab"):
+            tab.set_class(tab.id == f"tab-{key}", "active")
         pane = self.query_one("#pane", Vertical)
+        pane.border_title = entry[1]
         await pane.remove_children()
         section = entry[2](self)
         await pane.mount(section)
