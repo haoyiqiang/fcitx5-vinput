@@ -8,6 +8,7 @@ sidebar, content pane, footer key hints) and drives the `vinput` CLI.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import os
 import re
@@ -30,12 +31,17 @@ from textual.widgets import (
     Button,
     DataTable,
     Footer,
+    Header,
     Input,
     Label,
+    ListItem,
+    ListView,
     RichLog,
     Select,
     Static,
     Switch,
+    TabbedContent,
+    TabPane,
     TextArea,
 )
 
@@ -227,67 +233,14 @@ class Section(Vertical):
     TITLE = ""
     KEY = ""
 
+    _serial = itertools.count(1)
+
     def __init__(self, app: "VinputTUI") -> None:
-        super().__init__(id=f"section-{self.KEY}")
+        super().__init__(id=f"section-{self.KEY}-{next(self._serial)}")
         self.vapp = app
 
     async def reload(self) -> None:
         pass
-
-
-class StatusSection(Section):
-    TITLE = "状态"
-    KEY = "status"
-
-    def compose(self) -> ComposeResult:
-        yield Static(id="status-body")
-
-    async def on_mount(self) -> None:
-        await self.reload()
-        self.set_interval(3.0, self.reload)
-
-    async def reload(self) -> None:
-        rc, daemon = await v("daemon", "status")
-        providers = config_providers()
-        scenes = await vjson("scene", "list") or []
-        audio = {
-            "device": await cfg_get("/global/capture_device"),
-            "gain": await cfg_get("/asr/input_gain"),
-            "normalize": await cfg_get("/asr/normalize_audio"),
-            "vad": await cfg_get("/asr/vad/enabled"),
-            "duck": await cfg_get("/global/duck_output_while_recording"),
-        }
-        lines = [
-            f"[b]daemon[/b]  {daemon.strip().replace('Daemon status: ', '')}",
-            f"[b]service[/b] vinput-daemon: {await service_state('vinput-daemon')}   "
-            f"fcitx5: {await service_state(FCITX_UNIT)}",
-            "",
-            "[b]ASR[/b]",
-        ]
-        for p in providers:
-            mark = "●" if p.get("active") else "○"
-            lines.append(f"  {mark} {short_name(p['_key'])}  [dim]{p['_key']}[/dim]")
-        lines.append("")
-        lines.append("[b]场景[/b]")
-        for s in scenes:
-            mark = "●" if s.get("active") else "○"
-            extra = f" → {s.get('provider_id')}/{s.get('model')}" if s.get("provider_id") else ""
-            lines.append(f"  {mark} {s.get('label') or s.get('id')}{extra}")
-        lines += [
-            "",
-            f"[b]audio[/b]  device={audio['device']} gain={audio['gain']} normalize={audio['normalize']} "
-            f"vad={audio['vad']} duck={audio['duck']}",
-            "",
-            f"[b]hotkeys[/b] {FCITX_CONF}",
-        ]
-        if FCITX_CONF.exists():
-            lines += [f"  {line}" for line in FCITX_CONF.read_text().splitlines() if line.strip()]
-        self.query_one("#status-body", Static).update("\n".join(lines))
-
-
-async def service_state(unit: str) -> str:
-    rc, out = await run_cmd("systemctl", "--user", "is-active", unit)
-    return out.strip() or "unknown"
 
 
 class TableSection(Section):
@@ -295,6 +248,7 @@ class TableSection(Section):
     ACTIONS: tuple[tuple[str, str], ...] = ()
 
     def compose(self) -> ComposeResult:
+        yield Static(self.TITLE, classes="section-title")
         yield DataTable(id="table", cursor_type="row", zebra_stripes=True)
         with Horizontal(classes="buttons"):
             for label, action_id in self.ACTIONS:
@@ -402,6 +356,12 @@ class ProviderSection(TableSection):
     async def reload(self) -> None:
         self.vapp.cache["providers"] = config_providers()
         await super().reload()
+
+    @on(DataTable.RowSelected)
+    async def on_row(self, event: DataTable.RowSelected) -> None:
+        row = self.selected()
+        if row is not None:
+            await self.use(row)
 
     @work
     async def use(self, row: dict) -> None:
@@ -517,6 +477,12 @@ class LlmSection(TableSection):
         self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
         await self.reload()
 
+    @on(DataTable.RowSelected)
+    async def on_row(self, event: DataTable.RowSelected) -> None:
+        row = self.selected()
+        if row is not None:
+            await self.edit(row)
+
     @work
     async def test(self, row: dict) -> None:
         rc, out = await v("llm", "test", row["_key"])
@@ -557,6 +523,12 @@ class SceneSection(TableSection):
 
     def llm_options(self):
         return [(p["id"], p["id"]) for p in self.vapp.cache.get("llms", [])]
+
+    @on(DataTable.RowSelected)
+    async def on_row(self, event: DataTable.RowSelected) -> None:
+        row = self.selected()
+        if row is not None:
+            await self.use(row)
 
     @work
     async def use(self, row: dict) -> None:
@@ -667,6 +639,14 @@ class AdapterSection(TableSection):
         self.vapp.cache["adapters"] = config_adapters()
         await super().reload()
 
+    @on(DataTable.RowSelected)
+    async def on_row(self, event: DataTable.RowSelected) -> None:
+        row = self.selected()
+        if row is None:
+            return
+        rc, out = await v("adapter", "status", row["_key"])
+        self.app.notify(out.strip()[-300:] or row["_key"], severity="information" if rc == 0 else "error")
+
     @work
     async def start(self, row: dict) -> None:
         rc, out = await v("adapter", "start", row["_key"])
@@ -727,6 +707,7 @@ class AudioSection(Section):
     KEY = "audio"
 
     def compose(self) -> ComposeResult:
+        yield Static(self.TITLE, classes="section-title")
         yield Static("修改后保存会重启 daemon。", classes="hint")
         with VerticalScroll(classes="form-body"):
             yield Label("录音设备")
@@ -812,6 +793,7 @@ class KeysSection(Section):
     KEY = "keys"
 
     def compose(self) -> ComposeResult:
+        yield Static(self.TITLE, classes="section-title")
         yield Static("修改后保存会重启 fcitx5。值示例：Alt_R、Control+grave、Shift_R",
                      classes="hint")
         with VerticalScroll(classes="form-body"):
@@ -893,49 +875,103 @@ class KeysSection(Section):
                     severity="information" if rc == 0 else "error")
 
 
-class DaemonSection(Section):
-    TITLE = "守护进程"
-    KEY = "daemon"
+class OverviewSection(Section):
+    TITLE = "概览"
+    KEY = "overview"
 
     def compose(self) -> ComposeResult:
-        yield Static(id="daemon-body")
+        yield Static(self.TITLE, classes="section-title")
+        yield Static(id="overview-status")
+        with Horizontal(classes="overview-tables"):
+            with Vertical(classes="overview-col"):
+                yield Label("当前 ASR（Enter 切换）")
+                yield DataTable(id="asr-table", cursor_type="row", zebra_stripes=True)
+            with Vertical(classes="overview-col"):
+                yield Label("当前场景（Enter 切换）")
+                yield DataTable(id="scene-table", cursor_type="row", zebra_stripes=True)
         with Horizontal(classes="buttons"):
-            yield Button("启动", id="start")
-            yield Button("停止", id="stop")
-            yield Button("重启", id="restart", variant="primary")
+            yield Button("录音测试", id="record", variant="primary")
+            yield Button("重启 daemon", id="restart")
             yield Button("刷新", id="reload")
 
     async def on_mount(self) -> None:
         await self.reload()
+        self.set_interval(3.0, self.refresh_status)
 
     async def reload(self) -> None:
-        rc, out = await v("daemon", "status")
-        state = await service_state("vinput-daemon")
-        self.query_one("#daemon-body", Static).update(
-            f"service: [b]{state}[/b]\n\n{out.strip()}"
+        providers = config_providers()
+        scenes = await vjson("scene", "list") or []
+        asr = self.query_one("#asr-table", DataTable)
+        asr.clear(columns=True)
+        asr.add_columns("", "ASR")
+        for provider in providers:
+            asr.add_row("●" if provider["active"] else "○",
+                        short_name(provider["_key"]), key=provider["_key"])
+        scene_table = self.query_one("#scene-table", DataTable)
+        scene_table.clear(columns=True)
+        scene_table.add_columns("", "场景")
+        for scene in scenes:
+            scene_table.add_row("●" if scene.get("active") else "○",
+                                scene.get("label") or scene.get("id"), key=scene["id"])
+        self.vapp.cache["providers"] = providers
+        self.vapp.cache["scenes"] = scenes
+        await self.refresh_status()
+
+    async def refresh_status(self) -> None:
+        rc, daemon = await v("daemon", "status")
+        state = daemon.strip().replace("Daemon status: ", "")
+        providers = config_providers()
+        active_asr = next((short_name(p["_key"]) for p in providers if p["active"]), "?")
+        scenes = self.vapp.cache.get("scenes") or []
+        active_scene = next((s.get("label") or s["id"] for s in scenes if s.get("active")), "?")
+        vad = await cfg_get("/asr/vad/enabled")
+        self.query_one("#overview-status", Static).update(
+            f"daemon [b]{state}[/b] · ASR [b]{active_asr}[/b] · 场景 [b]{active_scene}[/b] · VAD {vad}"
         )
 
-    @on(Button.Pressed, "#start")
-    async def start(self) -> None:
-        rc, out = await v("daemon", "start")
-        self.notify(out.strip(), severity="information" if rc == 0 else "error")
+    async def _switch(self, kind: str, value: str) -> None:
+        rc, out = await v(kind, "use", value)
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
         await self.reload()
 
-    @on(Button.Pressed, "#stop")
-    async def stop(self) -> None:
-        rc, out = await v("daemon", "stop")
-        self.notify(out.strip(), severity="information" if rc == 0 else "error")
-        await self.reload()
+    @on(DataTable.RowSelected, "#asr-table")
+    async def on_asr(self, event: DataTable.RowSelected) -> None:
+        await self._switch("provider", str(event.row_key.value))
+
+    @on(DataTable.RowSelected, "#scene-table")
+    async def on_scene(self, event: DataTable.RowSelected) -> None:
+        await self._switch("scene", str(event.row_key.value))
+
+    @on(Button.Pressed, "#record")
+    async def on_record(self) -> None:
+        await v("recording", "toggle")
 
     @on(Button.Pressed, "#restart")
-    async def restart(self) -> None:
+    async def on_restart(self) -> None:
         rc, out = await v("daemon", "restart")
-        self.notify(out.strip(), severity="information" if rc == 0 else "error")
-        await self.reload()
+        self.app.notify(out.strip() or "daemon 已重启",
+                        severity="information" if rc == 0 else "error")
 
     @on(Button.Pressed, "#reload")
-    async def reload_button(self) -> None:
+    async def on_reload(self) -> None:
         await self.reload()
+
+
+class LlmHubSection(Section):
+    TITLE = "LLM"
+    KEY = "llm"
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.TITLE, classes="section-title")
+        with TabbedContent():
+            with TabPane("提供商"):
+                yield LlmSection(self.vapp)
+            with TabPane("适配器"):
+                yield AdapterSection(self.vapp)
+
+    async def reload(self) -> None:
+        for child in self.query(Section):
+            await child.reload()
 
 
 class LogSection(Section):
@@ -947,6 +983,7 @@ class LogSection(Section):
         self._follow_worker = None
 
     def compose(self) -> ComposeResult:
+        yield Static(self.TITLE, classes="section-title")
         yield RichLog(id="log", wrap=True, markup=False, highlight=True)
 
     def on_show(self) -> None:
@@ -980,20 +1017,13 @@ class LogSection(Section):
 
 # ------------------------------------------------------------------- app ----
 
-TAB_LABELS = {
-    "status": "状态", "provider": "ASR", "llm": "LLM", "scene": "场景",
-    "adapter": "适配器", "audio": "音频", "keys": "键位", "daemon": "守护", "logs": "日志",
-}
-
 SECTIONS: list[tuple[str, str, type[Section]]] = [
-    ("status", "状态", StatusSection),
-    ("provider", "ASR 提供商", ProviderSection),
-    ("llm", "LLM 提供商", LlmSection),
+    ("overview", "概览", OverviewSection),
+    ("provider", "ASR", ProviderSection),
     ("scene", "场景", SceneSection),
-    ("adapter", "LLM 适配器", AdapterSection),
+    ("llm", "LLM", LlmHubSection),
     ("audio", "音频", AudioSection),
     ("keys", "快捷键", KeysSection),
-    ("daemon", "守护进程", DaemonSection),
     ("logs", "日志", LogSection),
 ]
 
@@ -1002,37 +1032,32 @@ class VinputTUI(App):
     TITLE = "fcitx5-vinput"
     SUB_TITLE = "Omarchy dictation configuration"
     CSS = """
-    Screen { background: $surface; }
-    #topbar { height: 3; background: $panel; padding: 0 1; }
-    #brand { width: auto; height: 3; content-align: left middle; text-style: bold; padding: 0 2 0 0; color: $accent; }
-    .tab { height: 3; min-width: 0; border: none; background: $panel; color: $text-muted; padding: 0 1; margin: 0; }
-    .tab:hover { background: $boost; color: $text; }
-    .tab.active { background: $primary; color: $text; text-style: bold; }
-    #content { width: 1fr; height: 1fr; }
-    #pane { width: 1fr; height: 1fr; border: solid $panel; border-title-color: $accent; padding: 0 1; }
+    #sidebar { width: 24; }
+    #nav { height: 1fr; }
+    #pane { height: 1fr; padding: 0 1; }
     Section { height: 1fr; }
-    .hint { color: $text-muted; padding-bottom: 1; }
+    .section-title { text-style: bold; padding-bottom: 1; }
     .buttons { height: auto; padding-top: 1; }
-    .buttons Button { margin-right: 1; min-width: 10; border: none; background: $panel; }
-    .buttons Button:hover { background: $boost; }
-    DataTable { height: auto; max-height: 1fr; }
+    DataTable { height: 1fr; }
+    .overview-tables { height: 1fr; }
+    .overview-col { width: 1fr; height: 1fr; }
+    TabbedContent { height: 1fr; }
     .form-body { height: auto; max-height: 70%; }
-    .field-label { padding-top: 1; }
     .field-area { height: 6; }
-    Input, Select { height: 3; }
-    .modal { width: 70; height: auto; padding: 0 1; background: $surface; border: thick $primary; }
+    .modal { width: 70; height: auto; }
     .modal-wide { width: 90; height: auto; }
-    .modal-title { text-style: bold; padding-bottom: 1; color: $accent; }
-    .modal-buttons { height: auto; padding-top: 1; align: right middle; }
-    .modal-buttons Button { margin-left: 1; }
+    .modal-buttons { height: auto; padding-top: 1; }
     """
+
     BINDINGS = [
         Binding("q", "quit", "退出"),
         Binding("r", "reload_section", "刷新"),
-        Binding("tab", "focus_next", "焦点", show=True),
+        Binding("e", "edit_selected", "编辑"),
+        Binding("n", "new_selected", "新增"),
+        Binding("d", "delete_selected", "删除"),
+        Binding("tab", "focus_next", "下一个", show=False),
         Binding("shift+tab", "focus_previous", "上一个", show=False),
-    ] + [Binding(str(i), f"goto('{key}')", name, show=False)
-         for i, (key, name, _) in enumerate(SECTIONS, 1)]
+    ]
 
     def __init__(self) -> None:
         super().__init__()
@@ -1040,38 +1065,69 @@ class VinputTUI(App):
         self.current_section = SECTIONS[0][0] if SECTIONS else ""
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="topbar"):
-            yield Static("fcitx5-vinput", id="brand")
-            for index, (key, name, _) in enumerate(SECTIONS, 1):
-                yield Button(f"{index} {TAB_LABELS.get(key, name)}", id=f"tab-{key}", classes="tab")
-        with Vertical(id="content"):
-            yield Vertical(id="pane")
+        yield Header(show_clock=True)
+        with Horizontal():
+            with Vertical(id="sidebar"):
+                yield ListView(
+                    *[ListItem(Label(name), id=key) for key, name, _ in SECTIONS],
+                    id="nav",
+                )
+            with Vertical(id="content"):
+                yield Vertical(id="pane")
         yield Footer()
 
     async def on_mount(self) -> None:
+        self.query_one("#nav", ListView).focus()
         await self.show_section(SECTIONS[0][0])
 
-    @on(Button.Pressed, ".tab")
-    async def on_tab(self, event: Button.Pressed) -> None:
-        await self.show_section(event.button.id.removeprefix("tab-"))
-
-    async def action_goto(self, key: str) -> None:
-        await self.show_section(key)
+    @on(ListView.Highlighted)
+    async def on_highlight(self, event: ListView.Highlighted) -> None:
+        if event.item and event.item.id:
+            await self.show_section(event.item.id)
 
     async def show_section(self, key: str) -> None:
         entry = next((s for s in SECTIONS if s[0] == key), None)
         if entry is None:
             return
         self.current_section = key
-        for tab in self.query(".tab"):
-            tab.set_class(tab.id == f"tab-{key}", "active")
         pane = self.query_one("#pane", Vertical)
-        pane.border_title = entry[1]
         await pane.remove_children()
         section = entry[2](self)
         await pane.mount(section)
+        self.active_section = section
         section.refresh(layout=True)
         pane.refresh(layout=True)
+
+    def _current(self):
+        node = self.focused
+        while node is not None:
+            if isinstance(node, Section):
+                return node
+            node = node.parent
+        return getattr(self, "active_section", None)
+
+    async def action_edit_selected(self) -> None:
+        section = self._current()
+        row = section.selected() if section is not None and hasattr(section, "selected") else None
+        if row is not None and hasattr(section, "edit"):
+            section.edit(row)
+        else:
+            self.notify("当前页面没有可编辑项", severity="warning")
+
+    async def action_new_selected(self) -> None:
+        section = self._current()
+        if section is not None and hasattr(section, "add"):
+            section.add()
+        else:
+            self.notify("当前页面不支持新增", severity="warning")
+
+    async def action_delete_selected(self) -> None:
+        section = self._current()
+        row = section.selected() if section is not None and hasattr(section, "selected") else None
+        if row is not None and hasattr(section, "remove"):
+            section.remove(row)
+        else:
+            self.notify("当前页面没有可删除项", severity="warning")
 
     async def action_reload_section(self) -> None:
         for section in self.query(Section):
