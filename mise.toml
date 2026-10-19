@@ -52,13 +52,9 @@ run = "find src tests -name '*.cpp' -o -name '*.h' | xargs clang-format -i"
 description = "Check C++ source formatting without modifying files"
 run = "find src tests -name '*.cpp' -o -name '*.h' | xargs clang-format --dry-run --Werror"
 
-[tasks.check-i18n]
-description = "Validate gettext and Qt translation files"
-run = "python3 scripts/check-i18n.py"
-
 [tasks.lint]
-description = "Run linter and check i18n & JSON formatting"
-depends = ["check-fmt", "check-i18n"]
+description = "Run linter and check JSON formatting"
+depends = ["check-fmt"]
 run = """
 python3 -m json.tool data/default-config.json >/dev/null
 python3 -m json.tool notification.json >/dev/null
@@ -196,7 +192,7 @@ echo
 description = "Check installed vinput executable paths"
 run = """
 echo "== Installed Binaries =="
-for cmd in vinput vinput-daemon vinput-gui; do
+for cmd in vinput vinput-daemon vinput-tui; do
   if command -v "$cmd" >/dev/null 2>&1; then
     path="$(command -v "$cmd")"
     echo "$cmd -> $path"
@@ -221,10 +217,9 @@ description = "Check for conflicting /usr/local legacy paths"
 run = """
 echo "== Stale /usr/local Paths =="
 found=0
-for p in /usr/local/bin/vinput /usr/local/bin/vinput-daemon /usr/local/bin/vinput-gui \
+for p in /usr/local/bin/vinput /usr/local/bin/vinput-daemon /usr/local/bin/vinput-tui \
          /usr/local/share/systemd/user/vinput-daemon.service \
          /usr/local/share/dbus-1/services/org.fcitx.Vinput.service \
-         /usr/local/share/applications/vinput-gui.desktop; do
   if [ -e "$p" ]; then
     found=1
     ls -ld "$p"

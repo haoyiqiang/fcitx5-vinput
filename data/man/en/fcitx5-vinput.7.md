@@ -67,4 +67,4 @@ Keybindings can be customized in Fcitx5 Configuration → Addons → Vinput:
 5. **Text Insertion**: Candidates are presented in the Fcitx5 candidate window and committed into the active application.
 
 # SEE ALSO
-**vinput**(1), **vinput-daemon**(1), **vinput-gui**(1), **vinput-config**(5), **fcitx5**(1)
+**vinput**(1), **vinput-daemon**(1), **vinput-config**(5), **fcitx5**(1)

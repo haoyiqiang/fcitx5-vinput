@@ -117,5 +117,4 @@ VinputConfig::VinputConfig()
                    TriggerKeyListConstrain(), {}, fcitx::ToolTipAnnotation(PageNextKeysTooltip())),
       maxStreamingDisplayWidth(this, "MaxStreamingDisplayWidth", MaxStreamingDisplayWidthLabel(),
                                60, fcitx::IntConstrain(0, 500), {},
-                               fcitx::ToolTipAnnotation(MaxStreamingDisplayWidthTooltip())),
-      modelManager(this, "ModelManager", _("Open Vinput Settings"), "vinput-gui") {}
+                               fcitx::ToolTipAnnotation(MaxStreamingDisplayWidthTooltip())) {}

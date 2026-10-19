@@ -1,0 +1,1086 @@
+#!/usr/bin/env python3
+"""vinput-tui — full-screen Textual UI for fcitx5-vinput.
+
+Mirrors the layout of Omarchy's other configuration TUIs (header, section
+sidebar, content pane, footer key hints) and drives the `vinput` CLI.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import re
+from pathlib import Path
+
+import importlib.util
+import shutil
+
+if importlib.util.find_spec("textual") is None:
+    raise SystemExit("vinput-tui: missing dependency: python-textual")
+if shutil.which(os.environ.get("VINPUT_BIN", "vinput")) is None:
+    raise SystemExit(f"vinput-tui: missing dependency: {VINPUT}")
+
+from textual import on, work
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
+from textual.widgets import (
+    Button,
+    DataTable,
+    Footer,
+    Header,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    RichLog,
+    Select,
+    Static,
+    Switch,
+    TextArea,
+)
+
+VINPUT = os.environ.get("VINPUT_BIN", "vinput")
+HOME = Path.home()
+CORE_CONF = Path(os.environ.get("CORE_CONF", HOME / ".config/vinput/config.json"))
+FCITX_CONF = Path(os.environ.get("FCITX_CONF", HOME / ".config/fcitx5/conf/vinput.conf"))
+FCITX_UNIT = os.environ.get("FCITX_UNIT", "omarchy-fcitx5")
+
+
+async def run_cmd(*args: str, stdin_text: str | None = None) -> tuple[int, str]:
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdin=asyncio.subprocess.PIPE if stdin_text is not None else asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    out, _ = await proc.communicate(stdin_text.encode() if stdin_text is not None else None)
+    return proc.returncode, out.decode(errors="replace")
+
+
+async def v(*args: str, stdin_text: str | None = None) -> tuple[int, str]:
+    return await run_cmd(VINPUT, *args, stdin_text=stdin_text)
+
+
+async def vjson(*args: str):
+    rc, out = await run_cmd(VINPUT, "-j", *args)
+    if rc != 0:
+        return None
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError:
+        return None
+
+
+def load_config() -> dict:
+    try:
+        return json.loads(CORE_CONF.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def short_name(machine_id: str) -> str:
+    name = machine_id
+    for prefix in ("provider.", "model."):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+    for suffix in (".streaming", ".batch"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+    return name
+
+
+def config_providers() -> list[dict]:
+    cfg = load_config()
+    asr = cfg.get("asr", {})
+    active = asr.get("active_provider", "")
+    return [
+        {
+            "_key": p.get("id", ""),
+            "active": p.get("id", "") == active,
+            "type": p.get("type", ""),
+            "command": p.get("command", ""),
+            "args": p.get("args", []),
+            "env": p.get("env", {}),
+            "timeout_ms": p.get("timeout_ms", 60000),
+        }
+        for p in asr.get("providers", [])
+    ]
+
+
+def config_llms() -> list[dict]:
+    return load_config().get("llm", {}).get("providers", [])
+
+
+def config_adapters() -> list[dict]:
+    return load_config().get("llm", {}).get("adapters", [])
+
+
+async def cfg_get(path: str) -> str:
+    rc, out = await v("config", "get", path)
+    return out.strip() if rc == 0 else ""
+
+
+async def cfg_set(path: str, value) -> tuple[int, str]:
+    return await v("config", "set", path, json.dumps(value) if isinstance(value, bool) else str(value))
+
+
+# ---------------------------------------------------------------- modals ----
+
+
+class Confirm(ModalScreen[bool]):
+    BINDINGS = [("escape", "dismiss_false", "取消"), ("y", "dismiss_true", "是")]
+
+    def __init__(self, message: str) -> None:
+        super().__init__()
+        self.message = message
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="modal"):
+            yield Label(self.message, classes="modal-title")
+            with Horizontal(classes="modal-buttons"):
+                yield Button("确定", id="yes", variant="error")
+                yield Button("取消", id="no")
+
+    @on(Button.Pressed, "#yes")
+    def yes(self) -> None:
+        self.dismiss(True)
+
+    @on(Button.Pressed, "#no")
+    def no(self) -> None:
+        self.dismiss(False)
+
+    def action_dismiss_true(self) -> None:
+        self.dismiss(True)
+
+    def action_dismiss_false(self) -> None:
+        self.dismiss(False)
+
+
+class Form(ModalScreen[dict | None]):
+    """Generic form. fields: [{key, label, kind, value, options}]"""
+
+    BINDINGS = [("escape", "cancel", "取消")]
+
+    def __init__(self, title: str, fields: list[dict]) -> None:
+        super().__init__()
+        self.title_text = title
+        self.fields = fields
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="modal modal-wide"):
+            yield Label(self.title_text, classes="modal-title")
+            with VerticalScroll(classes="form-body"):
+                for f in self.fields:
+                    yield Label(f["label"], classes="field-label")
+                    kind = f.get("kind", "text")
+                    value = f.get("value", "")
+                    if kind == "area":
+                        yield TextArea(str(value), id=f"f-{f['key']}", classes="field-area")
+                    elif kind == "bool":
+                        yield Switch(value=bool(value), id=f"f-{f['key']}")
+                    elif kind == "select":
+                        options = f.get("options") or [("(无)", "")]
+                        yield Select(
+                            options,
+                            value=value if value in dict(options) else Select.NULL,
+                            allow_blank=True,
+                            id=f"f-{f['key']}",
+                        )
+                    else:
+                        yield Input(str(value), id=f"f-{f['key']}", placeholder=f.get("placeholder", ""))
+            with Horizontal(classes="modal-buttons"):
+                yield Button("保存", id="save", variant="primary")
+                yield Button("取消", id="cancel")
+
+    def _collect(self) -> dict:
+        out = {}
+        for f in self.fields:
+            key = f["key"]
+            kind = f.get("kind", "text")
+            widget = self.query_one(f"#f-{key}")
+            if kind == "area":
+                out[key] = widget.text
+            elif kind == "bool":
+                out[key] = widget.value
+            elif kind == "select":
+                out[key] = widget.value if widget.value is not Select.NULL else ""
+            else:
+                out[key] = widget.value
+        return out
+
+    @on(Button.Pressed, "#save")
+    def save(self) -> None:
+        self.dismiss(self._collect())
+
+    @on(Button.Pressed, "#cancel")
+    def cancel_button(self) -> None:
+        self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+# -------------------------------------------------------------- sections ----
+
+
+class Section(Vertical):
+    TITLE = ""
+    KEY = ""
+
+    def __init__(self, app: "VinputTUI") -> None:
+        super().__init__(id=f"section-{self.KEY}")
+        self.vapp = app
+
+    async def reload(self) -> None:
+        pass
+
+
+class StatusSection(Section):
+    TITLE = "状态"
+    KEY = "status"
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.TITLE, classes="section-title")
+        yield Static(id="status-body")
+
+    async def on_mount(self) -> None:
+        await self.reload()
+        self.set_interval(3.0, self.reload)
+
+    async def reload(self) -> None:
+        rc, daemon = await v("daemon", "status")
+        providers = config_providers()
+        scenes = await vjson("scene", "list") or []
+        audio = {
+            "device": await cfg_get("/global/capture_device"),
+            "gain": await cfg_get("/asr/input_gain"),
+            "normalize": await cfg_get("/asr/normalize_audio"),
+            "vad": await cfg_get("/asr/vad/enabled"),
+            "duck": await cfg_get("/global/duck_output_while_recording"),
+        }
+        lines = [
+            f"[b]daemon[/b]  {daemon.strip().replace('Daemon status: ', '')}",
+            f"[b]service[/b] vinput-daemon: {await service_state('vinput-daemon')}   "
+            f"fcitx5: {await service_state(FCITX_UNIT)}",
+            "",
+            "[b]ASR[/b]",
+        ]
+        for p in providers:
+            mark = "●" if p.get("active") else "○"
+            lines.append(f"  {mark} {short_name(p['_key'])}  [dim]{p['_key']}[/dim]")
+        lines.append("")
+        lines.append("[b]场景[/b]")
+        for s in scenes:
+            mark = "●" if s.get("active") else "○"
+            extra = f" → {s.get('provider_id')}/{s.get('model')}" if s.get("provider_id") else ""
+            lines.append(f"  {mark} {s.get('label') or s.get('id')}{extra}")
+        lines += [
+            "",
+            f"[b]audio[/b]  device={audio['device']} gain={audio['gain']} normalize={audio['normalize']} "
+            f"vad={audio['vad']} duck={audio['duck']}",
+            "",
+            f"[b]hotkeys[/b] {FCITX_CONF}",
+        ]
+        if FCITX_CONF.exists():
+            lines += [f"  {line}" for line in FCITX_CONF.read_text().splitlines() if line.strip()]
+        self.query_one("#status-body", Static).update("\n".join(lines))
+
+
+async def service_state(unit: str) -> str:
+    rc, out = await run_cmd("systemctl", "--user", "is-active", unit)
+    return out.strip() or "unknown"
+
+
+class TableSection(Section):
+    COLUMNS: tuple[str, ...] = ()
+    ACTIONS: tuple[tuple[str, str], ...] = ()
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.TITLE, classes="section-title")
+        yield DataTable(id="table", cursor_type="row", zebra_stripes=True)
+        with Horizontal(classes="buttons"):
+            for label, action_id in self.ACTIONS:
+                yield Button(label, id=action_id)
+
+    async def on_mount(self) -> None:
+        table = self.query_one(DataTable)
+        table.add_columns(*self.COLUMNS)
+        await self.reload()
+
+    def rows(self) -> list[dict]:
+        return []
+
+    async def reload(self) -> None:
+        table = self.query_one(DataTable)
+        table.clear()
+        for row in self.rows():
+            table.add_row(*[str(row.get(c, "")) for c in self.COLUMNS], key=row.get("_key"))
+
+    def selected(self) -> dict | None:
+        table = self.query_one(DataTable)
+        if not table.row_count:
+            return None
+        return self.rows()[table.cursor_row]
+
+    async def ensure_llms(self) -> None:
+        if not self.vapp.cache.get("llms"):
+            self.vapp.cache["llms"] = config_llms()
+
+    @on(Button.Pressed)
+    async def _dispatch(self, event: Button.Pressed) -> None:
+        action = event.button.id or ""
+        handler = getattr(self, action, None)
+        if handler is None or not callable(handler):
+            return
+        if action == "add":
+            handler()
+            return
+        row = self.selected()
+        if row is None:
+            self.app.notify("先选择一行", severity="error")
+            return
+        handler(row)
+
+    async def edit_provider(self, row: dict) -> None:
+        machine_id = row["_key"]
+        try:
+            providers = json.loads(CORE_CONF.read_text())["asr"]["providers"]
+        except (OSError, KeyError, json.JSONDecodeError):
+            self.app.notify("读取 config.json 失败", severity="error")
+            return
+        prov = next((p for p in providers if p.get("id") == machine_id), {})
+        env = "\n".join(f"{k}={v}" for k, v in (prov.get("env") or {}).items())
+        args = "\n".join(prov.get("args") or [])
+        result = await self.app.push_screen_wait(
+            Form(
+                f"编辑 {machine_id}",
+                [
+                    {"key": "command", "label": "命令 / 解释器", "value": prov.get("command", "")},
+                    {"key": "args", "label": "参数（每行一个）", "kind": "area", "value": args},
+                    {"key": "env", "label": "环境变量（每行 KEY=VALUE）", "kind": "area", "value": env},
+                    {"key": "timeout", "label": "超时（毫秒）", "value": prov.get("timeout_ms", 60000)},
+                ],
+            )
+        )
+        if not result:
+            return
+        prov["command"] = result["command"]
+        prov["args"] = [a for a in result["args"].splitlines() if a]
+        prov["env"] = dict(
+            line.split("=", 1) for line in result["env"].splitlines() if "=" in line
+        )
+        try:
+            prov["timeout_ms"] = int(result["timeout"])
+        except ValueError:
+            self.app.notify("超时必须是数字", severity="error")
+            return
+        rc, out = await v("config", "set", "/asr/providers", "--stdin",
+                          stdin_text=json.dumps(providers))
+        if rc == 0:
+            await v("daemon", "restart")
+            self.notify(f"{machine_id} 已更新")
+            await self.reload()
+        else:
+            self.app.notify(out.strip(), severity="error")
+
+
+class ProviderSection(TableSection):
+    TITLE = "ASR 提供商"
+    KEY = "provider"
+    COLUMNS = ("", "ID", "类型")
+    ACTIONS = (("切换", "use"), ("安装", "add"), ("编辑", "edit"), ("删除", "remove"))
+
+    def rows(self) -> list[dict]:
+        return [
+            {
+                "_key": p["_key"],
+                "": "●" if p.get("active") else "○",
+                "ID": short_name(p["_key"]),
+                "类型": p.get("type", ""),
+            }
+            for p in (self.vapp.cache.get("providers") or [])
+        ]
+
+    async def reload(self) -> None:
+        self.vapp.cache["providers"] = config_providers()
+        await super().reload()
+
+    @work
+    async def use(self, row: dict) -> None:
+        rc, out = await v("provider", "use", row["_key"])
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+    @work
+    async def add(self) -> None:
+        available = await vjson("provider", "list", "-a") or []
+        options = [(p.get("title") or p["machine_id"], p["machine_id"])
+                   for p in available if p.get("status") != "installed"]
+        if not options:
+            self.app.notify("没有可安装的提供商", severity="error")
+            return
+        result = await self.app.push_screen_wait(
+            Form("安装 ASR 提供商", [{"key": "id", "label": "提供商", "kind": "select", "options": options}])
+        )
+        if not result or not result["id"]:
+            return
+        rc, out = await v("provider", "add", result["id"])
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+    @work
+    async def edit(self, row: dict) -> None:
+        await self.edit_provider(row)
+
+    @work
+    async def remove(self, row: dict) -> None:
+        if not await self.app.push_screen_wait(Confirm(f"删除 {row['_key']} 及其配置？")):
+            return
+        rc, out = await v("provider", "remove", row["_key"])
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+
+class LlmSection(TableSection):
+    TITLE = "LLM 提供商"
+    KEY = "llm"
+    COLUMNS = ("ID", "Base URL")
+    ACTIONS = (("新增", "add"), ("编辑", "edit"), ("测试", "test"), ("删除", "remove"))
+
+    def rows(self) -> list[dict]:
+        return [
+            {"_key": p["id"], "ID": p["id"], "Base URL": p.get("base_url", "")}
+            for p in (self.vapp.cache.get("llms") or [])
+        ]
+
+    async def reload(self) -> None:
+        self.vapp.cache["llms"] = config_llms()
+        await super().reload()
+
+    @work
+    async def add(self) -> None:
+        result = await self.app.push_screen_wait(
+            Form(
+                "新增 LLM",
+                [
+                    {"key": "id", "label": "ID", "value": ""},
+                    {"key": "base_url", "label": "Base URL", "value": "https://api.openai.com/v1"},
+                    {"key": "api_key", "label": "API Key", "value": "", "placeholder": "可留空"},
+                    {"key": "extra", "label": "extra_body JSON", "kind": "area", "value": ""},
+                ],
+            )
+        )
+        if not result or not result["id"] or not result["base_url"]:
+            return
+        args = ["llm", "add", result["id"], "-u", result["base_url"]]
+        if result["api_key"]:
+            args += ["-k", result["api_key"]]
+        if result["extra"].strip():
+            try:
+                json.loads(result["extra"])
+            except json.JSONDecodeError:
+                self.app.notify("extra_body 不是合法 JSON", severity="error")
+                return
+            args += ["-e", result["extra"]]
+        rc, out = await v(*args)
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+    @work
+    async def edit(self, row: dict) -> None:
+        provider = next((p for p in self.vapp.cache.get("llms", []) if p["id"] == row["_key"]), {})
+        result = await self.app.push_screen_wait(
+            Form(
+                f"编辑 {row['_key']}",
+                [
+                    {"key": "base_url", "label": "Base URL", "value": provider.get("base_url", "")},
+                    {"key": "api_key", "label": "API Key（留空不改）", "value": "", "placeholder": ""},
+                    {"key": "extra", "label": "extra_body JSON（留空不改）", "kind": "area", "value": ""},
+                ],
+            )
+        )
+        if not result:
+            return
+        args = ["llm", "edit", row["_key"]]
+        if result["base_url"] and result["base_url"] != provider.get("base_url"):
+            args += ["-u", result["base_url"]]
+        if result["api_key"]:
+            args += ["-k", result["api_key"]]
+        if result["extra"].strip():
+            try:
+                json.loads(result["extra"])
+            except json.JSONDecodeError:
+                self.app.notify("extra_body 不是合法 JSON", severity="error")
+                return
+            args += ["-e", result["extra"]]
+        if len(args) == 3:
+            return
+        rc, out = await v(*args)
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+    @work
+    async def test(self, row: dict) -> None:
+        rc, out = await v("llm", "test", row["_key"])
+        self.app.notify(out.strip()[-400:] or "完成", severity="information" if rc == 0 else "error")
+
+    @work
+    async def remove(self, row: dict) -> None:
+        if not await self.app.push_screen_wait(Confirm(f"删除 LLM {row['_key']}？")):
+            return
+        rc, out = await v("llm", "remove", row["_key"])
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+
+class SceneSection(TableSection):
+    TITLE = "场景"
+    KEY = "scene"
+    COLUMNS = ("", "ID", "名称", "Provider", "Model", "Count")
+    ACTIONS = (("切换", "use"), ("新增", "add"), ("编辑", "edit"), ("删除", "remove"))
+
+    def rows(self) -> list[dict]:
+        return [
+            {
+                "_key": s["id"],
+                "": "●" if s.get("active") else "○",
+                "ID": s["id"],
+                "名称": s.get("label", ""),
+                "Provider": s.get("provider_id") or "-",
+                "Model": s.get("model") or "-",
+                "Count": s.get("count", 0),
+            }
+            for s in (self.vapp.cache.get("scenes") or [])
+        ]
+
+    async def reload(self) -> None:
+        self.vapp.cache["scenes"] = await vjson("scene", "list") or []
+        await super().reload()
+
+    def llm_options(self):
+        return [(p["id"], p["id"]) for p in self.vapp.cache.get("llms", [])]
+
+    @work
+    async def use(self, row: dict) -> None:
+        rc, out = await v("scene", "use", row["_key"])
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+    @work
+    async def add(self) -> None:
+        await self.ensure_llms()
+        result = await self.app.push_screen_wait(
+            Form(
+                "新增场景",
+                [
+                    {"key": "id", "label": "ID", "value": "polish"},
+                    {"key": "label", "label": "显示名称", "value": ""},
+                    {"key": "provider", "label": "LLM 提供商", "kind": "select", "options": self.llm_options()},
+                    {"key": "model", "label": "模型", "value": ""},
+                    {"key": "count", "label": "候选数（0 = 不调用 LLM）", "value": "1"},
+                    {"key": "timeout", "label": "超时（毫秒）", "value": "4000"},
+                    {"key": "context", "label": "上下文行数", "value": "0"},
+                    {"key": "raw_cand", "label": "raw_cand（候选含原文）", "kind": "bool", "value": True},
+                    {"key": "raw_prev", "label": "raw_prev（预览原文）", "kind": "bool", "value": True},
+                    {"key": "prompt", "label": "Prompt", "kind": "area", "value": ""},
+                ],
+            )
+        )
+        if not result or not result["id"]:
+            return
+        args = ["scene", "add", "--id", result["id"], "-l", result["label"] or result["id"],
+                "-c", result["count"] or "1", "--timeout", result["timeout"] or "4000",
+                "--context-lines", result["context"] or "0",
+                "--raw-cand", str(result["raw_cand"]).lower(),
+                "--raw-prev", str(result["raw_prev"]).lower()]
+        if result["provider"]:
+            args += ["-p", result["provider"]]
+        if result["model"]:
+            args += ["-m", result["model"]]
+        if result["prompt"]:
+            args += ["-t", result["prompt"]]
+        rc, out = await v(*args)
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+    @work
+    async def edit(self, row: dict) -> None:
+        await self.ensure_llms()
+        scene = next((s for s in self.vapp.cache.get("scenes", []) if s["id"] == row["_key"]), {})
+        result = await self.app.push_screen_wait(
+            Form(
+                f"编辑 {row['_key']}",
+                [
+                    {"key": "label", "label": "显示名称", "value": scene.get("label", "")},
+                    {"key": "provider", "label": "LLM 提供商", "kind": "select", "options": self.llm_options(),
+                     "value": scene.get("provider_id") or ""},
+                    {"key": "model", "label": "模型", "value": scene.get("model", "")},
+                    {"key": "count", "label": "候选数", "value": str(scene.get("count", 1))},
+                    {"key": "timeout", "label": "超时（毫秒）", "value": str(scene.get("timeout_ms", 4000))},
+                    {"key": "context", "label": "上下文行数", "value": str(scene.get("context_lines", 0))},
+                    {"key": "raw_cand", "label": "raw_cand", "kind": "bool", "value": bool(scene.get("raw_cand"))},
+                    {"key": "raw_prev", "label": "raw_prev", "kind": "bool", "value": bool(scene.get("raw_prev"))},
+                    {"key": "prompt", "label": "Prompt", "kind": "area", "value": scene.get("prompt", "")},
+                ],
+            )
+        )
+        if not result:
+            return
+        args = ["scene", "edit", row["_key"],
+                "-l", result["label"], "-c", result["count"], "--timeout", result["timeout"],
+                "--context-lines", result["context"],
+                "--raw-cand", str(result["raw_cand"]).lower(),
+                "--raw-prev", str(result["raw_prev"]).lower()]
+        if result["provider"]:
+            args += ["-p", result["provider"]]
+        if result["model"]:
+            args += ["-m", result["model"]]
+        if result["prompt"]:
+            args += ["-t", result["prompt"]]
+        rc, out = await v(*args)
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+    @work
+    async def remove(self, row: dict) -> None:
+        if not await self.app.push_screen_wait(Confirm(f"删除场景 {row['_key']}？")):
+            return
+        rc, out = await v("scene", "remove", row["_key"])
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+
+class AdapterSection(TableSection):
+    TITLE = "LLM 适配器"
+    KEY = "adapter"
+    COLUMNS = ("ID", "自启", "命令")
+    ACTIONS = (("启动", "start"), ("停止", "stop"), ("重启", "restart"),
+               ("自启开", "enable"), ("自启关", "disable"), ("安装", "add"), ("删除", "remove"))
+
+    def rows(self) -> list[dict]:
+        return [
+            {"_key": a.get("id", ""), "ID": short_name(a.get("id", "")),
+             "自启": "auto" if a.get("auto_start") or a.get("autoStart") else "-",
+             "命令": a.get("command", "")}
+            for a in (self.vapp.cache.get("adapters") or [])
+        ]
+
+    async def reload(self) -> None:
+        self.vapp.cache["adapters"] = config_adapters()
+        await super().reload()
+
+    @work
+    async def start(self, row: dict) -> None:
+        rc, out = await v("adapter", "start", row["_key"])
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+    @work
+    async def stop(self, row: dict) -> None:
+        rc, out = await v("adapter", "stop", row["_key"])
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+    @work
+    async def restart(self, row: dict) -> None:
+        rc, out = await v("adapter", "restart", row["_key"])
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+
+    @work
+    async def enable(self, row: dict) -> None:
+        rc, out = await v("adapter", "enable", row["_key"])
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+    @work
+    async def disable(self, row: dict) -> None:
+        rc, out = await v("adapter", "disable", row["_key"])
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+    @work
+    async def add(self) -> None:
+        available = await vjson("adapter", "list", "-a") or []
+        options = [(a.get("title") or a["machine_id"], a["machine_id"])
+                   for a in available if a.get("status") != "installed"]
+        if not options:
+            self.app.notify("没有可安装的适配器", severity="error")
+            return
+        result = await self.app.push_screen_wait(
+            Form("安装适配器", [{"key": "id", "label": "适配器", "kind": "select", "options": options}])
+        )
+        if not result or not result["id"]:
+            return
+        rc, out = await v("adapter", "add", result["id"])
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+    @work
+    async def remove(self, row: dict) -> None:
+        if not await self.app.push_screen_wait(Confirm(f"删除适配器 {row['_key']}？")):
+            return
+        rc, out = await v("adapter", "remove", row["_key"])
+        self.app.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+
+class AudioSection(Section):
+    TITLE = "音频"
+    KEY = "audio"
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.TITLE, classes="section-title")
+        yield Static("修改后保存会重启 daemon。", classes="hint")
+        with VerticalScroll(classes="form-body"):
+            yield Label("录音设备")
+            yield Select([("(载入中)", "")], id="f-device", allow_blank=False)
+            yield Label("输入增益")
+            yield Input(id="f-gain")
+            yield Label("峰值归一化（normalize_audio）")
+            yield Switch(id="f-normalize")
+            yield Label("VAD 开关")
+            yield Switch(id="f-vad")
+            yield Label("VAD 阈值")
+            yield Input(id="f-vad-threshold")
+            yield Label("静音判定秒数")
+            yield Input(id="f-vad-silence")
+            yield Label("语音前后填充毫秒")
+            yield Input(id="f-vad-pad")
+            yield Label("录音时压低输出")
+            yield Switch(id="f-duck")
+            yield Label("压低后的音量比例")
+            yield Input(id="f-duck-volume")
+        with Horizontal(classes="buttons"):
+            yield Button("保存", id="save", variant="primary")
+            yield Button("重新载入", id="reload")
+
+    async def on_mount(self) -> None:
+        await self.reload()
+
+    async def reload(self) -> None:
+        devices = await vjson("device", "list") or []
+        options = [(f"{d.get('name')} — {d.get('description', '')}", d.get("name")) for d in devices]
+        select = self.query_one("#f-device", Select)
+        select.set_options(options)
+        active = next((d.get("name") for d in devices if d.get("active")), None)
+        if active and active in {value for _, value in options}:
+            select.value = active
+        self.query_one("#f-gain", Input).value = await cfg_get("/asr/input_gain")
+        self.query_one("#f-normalize", Switch).value = (await cfg_get("/asr/normalize_audio")) == "true"
+        self.query_one("#f-vad", Switch).value = (await cfg_get("/asr/vad/enabled")) == "true"
+        self.query_one("#f-vad-threshold", Input).value = await cfg_get("/asr/vad/threshold")
+        self.query_one("#f-vad-silence", Input).value = await cfg_get("/asr/vad/min_silence_duration")
+        self.query_one("#f-vad-pad", Input).value = await cfg_get("/asr/vad/speech_pad_ms")
+        self.query_one("#f-duck", Switch).value = (await cfg_get("/global/duck_output_while_recording")) == "true"
+        self.query_one("#f-duck-volume", Input).value = await cfg_get("/global/duck_output_volume")
+
+    async def save(self) -> None:
+        device = self.query_one("#f-device", Select).value
+        if device:
+            await v("device", "use", str(device))
+        pairs = [
+            ("/asr/input_gain", self.query_one("#f-gain", Input).value),
+            ("/asr/normalize_audio", self.query_one("#f-normalize", Switch).value),
+            ("/asr/vad/enabled", self.query_one("#f-vad", Switch).value),
+            ("/asr/vad/threshold", self.query_one("#f-vad-threshold", Input).value),
+            ("/asr/vad/min_silence_duration", self.query_one("#f-vad-silence", Input).value),
+            ("/asr/vad/speech_pad_ms", self.query_one("#f-vad-pad", Input).value),
+            ("/global/duck_output_while_recording", self.query_one("#f-duck", Switch).value),
+            ("/global/duck_output_volume", self.query_one("#f-duck-volume", Input).value),
+        ]
+        failed = []
+        for path, value in pairs:
+            if value == "" or value is None:
+                continue
+            rc, out = await cfg_set(path, value)
+            if rc != 0:
+                failed.append(f"{path}: {out.strip()}")
+        await v("daemon", "restart")
+        if failed:
+            self.notify("部分设置失败：" + "; ".join(failed), severity="error")
+        else:
+            self.notify("音频设置已保存，daemon 已重启")
+
+    @on(Button.Pressed, "#save")
+    async def on_save(self) -> None:
+        await self.save()
+
+    @on(Button.Pressed, "#reload")
+    async def on_reload(self) -> None:
+        await self.reload()
+
+
+class KeysSection(Section):
+    TITLE = "快捷键"
+    KEY = "keys"
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.TITLE, classes="section-title")
+        yield Static("修改后保存会重启 fcitx5。值示例：Alt_R、Control+grave、Shift_R",
+                     classes="hint")
+        with VerticalScroll(classes="form-body"):
+            yield Label("录音触发键（TriggerKey）")
+            yield Input(id="f-trigger")
+            yield Label("命令键（CommandKeys）")
+            yield Input(id="f-command")
+            yield Label("命令面板键（MenuKey）")
+            yield Input(id="f-menu")
+        with Horizontal(classes="buttons"):
+            yield Button("保存并重启 fcitx5", id="save", variant="primary")
+            yield Button("重新载入", id="reload")
+            yield Button("仅重启 fcitx5", id="restart")
+
+    async def on_mount(self) -> None:
+        await self.reload()
+
+    def _values(self) -> dict[str, str]:
+        return {
+            "TriggerKey": self.query_one("#f-trigger", Input).value.strip(),
+            "CommandKeys": self.query_one("#f-command", Input).value.strip(),
+            "MenuKey": self.query_one("#f-menu", Input).value.strip(),
+        }
+
+    async def reload(self) -> None:
+        values = {"TriggerKey": "Alt_R", "CommandKeys": "Control_R", "MenuKey": "Shift_R"}
+        if FCITX_CONF.exists():
+            section = None
+            for line in FCITX_CONF.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                m = re.match(r"^\[(.+)]$", line)
+                if m:
+                    section = m.group(1)
+                elif section in values and "=" in line:
+                    key, _, value = line.partition("=")
+                    if key.strip().isdigit() and value.strip():
+                        values[section] = value.strip()
+        self.query_one("#f-trigger", Input).value = values["TriggerKey"]
+        self.query_one("#f-command", Input).value = values["CommandKeys"]
+        self.query_one("#f-menu", Input).value = values["MenuKey"]
+
+    async def write_conf(self) -> None:
+        values = self._values()
+        await run_cmd("systemctl", "--user", "stop", FCITX_UNIT)
+        FCITX_CONF.parent.mkdir(parents=True, exist_ok=True)
+        lines = []
+        if FCITX_CONF.exists():
+            section = None
+            for line in FCITX_CONF.read_text().splitlines():
+                stripped = line.strip()
+                m = re.match(r"^#?\s*\[(.+)]$", stripped)
+                if m:
+                    section = m.group(1)
+                if section in values:
+                    continue
+                lines.append(line)
+        for key, value in values.items():
+            if value:
+                lines += [f"[{key}]", f"0={value}"]
+        FCITX_CONF.write_text("\n".join(lines).strip() + "\n")
+        rc, out = await run_cmd("systemctl", "--user", "start", FCITX_UNIT)
+        self.notify("快捷键已保存，fcitx5 已重启" if rc == 0 else out.strip(),
+                    severity="information" if rc == 0 else "error")
+
+    @on(Button.Pressed, "#save")
+    async def on_save(self) -> None:
+        await self.write_conf()
+
+    @on(Button.Pressed, "#reload")
+    async def on_reload(self) -> None:
+        await self.reload()
+
+    @on(Button.Pressed, "#restart")
+    async def on_restart(self) -> None:
+        rc, out = await run_cmd("systemctl", "--user", "restart", FCITX_UNIT)
+        self.notify("fcitx5 已重启" if rc == 0 else out.strip(),
+                    severity="information" if rc == 0 else "error")
+
+
+class DaemonSection(Section):
+    TITLE = "守护进程"
+    KEY = "daemon"
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.TITLE, classes="section-title")
+        yield Static(id="daemon-body")
+        with Horizontal(classes="buttons"):
+            yield Button("启动", id="start")
+            yield Button("停止", id="stop")
+            yield Button("重启", id="restart", variant="primary")
+            yield Button("刷新", id="reload")
+
+    async def on_mount(self) -> None:
+        await self.reload()
+
+    async def reload(self) -> None:
+        rc, out = await v("daemon", "status")
+        state = await service_state("vinput-daemon")
+        self.query_one("#daemon-body", Static).update(
+            f"service: [b]{state}[/b]\n\n{out.strip()}"
+        )
+
+    @on(Button.Pressed, "#start")
+    async def start(self) -> None:
+        rc, out = await v("daemon", "start")
+        self.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+    @on(Button.Pressed, "#stop")
+    async def stop(self) -> None:
+        rc, out = await v("daemon", "stop")
+        self.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+    @on(Button.Pressed, "#restart")
+    async def restart(self) -> None:
+        rc, out = await v("daemon", "restart")
+        self.notify(out.strip(), severity="information" if rc == 0 else "error")
+        await self.reload()
+
+    @on(Button.Pressed, "#reload")
+    async def reload_button(self) -> None:
+        await self.reload()
+
+
+class LogSection(Section):
+    TITLE = "日志"
+    KEY = "logs"
+
+    def __init__(self, app: "VinputTUI") -> None:
+        super().__init__(app)
+        self._follow_worker = None
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.TITLE, classes="section-title")
+        yield RichLog(id="log", wrap=True, markup=False, highlight=True)
+
+    def on_show(self) -> None:
+        self.query_one("#log", RichLog).write("journalctl --user -u vinput-daemon -f")
+        if self._follow_worker is None or self._follow_worker.is_finished:
+            self._follow_worker = self.run_worker(self._follow(), exclusive=True)
+
+    def on_hide(self) -> None:
+        if self._follow_worker is not None and not self._follow_worker.is_finished:
+            self._follow_worker.cancel()
+        self._follow_worker = None
+
+    async def _follow(self) -> None:
+        proc = await asyncio.create_subprocess_exec(
+            "journalctl", "--user", "-u", "vinput-daemon", "-f", "-n", "100", "--no-pager",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        log = self.query_one("#log", RichLog)
+        assert proc.stdout is not None
+        try:
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                log.write(line.decode(errors="replace").rstrip())
+        finally:
+            if proc.returncode is None:
+                proc.terminate()
+
+
+# ------------------------------------------------------------------- app ----
+
+SECTIONS: list[tuple[str, str, type[Section]]] = [
+    ("status", "状态", StatusSection),
+    ("provider", "ASR 提供商", ProviderSection),
+    ("llm", "LLM 提供商", LlmSection),
+    ("scene", "场景", SceneSection),
+    ("adapter", "LLM 适配器", AdapterSection),
+    ("audio", "音频", AudioSection),
+    ("keys", "快捷键", KeysSection),
+    ("daemon", "守护进程", DaemonSection),
+    ("logs", "日志", LogSection),
+]
+
+
+class VinputTUI(App):
+    TITLE = "fcitx5-vinput"
+    SUB_TITLE = "Omarchy dictation configuration"
+    CSS = """
+    Horizontal { height: 1fr; }
+    #sidebar { width: 24; height: 1fr; border-right: solid $panel; }
+    #nav { height: 1fr; }
+    #content { width: 1fr; height: 1fr; }
+    #pane { width: 1fr; height: 1fr; padding: 1 2; }
+    Section { height: 1fr; }
+    .section-title { text-style: bold; padding-bottom: 1; }
+    .hint { color: $text-muted; padding-bottom: 1; }
+    .buttons { height: auto; padding-top: 1; }
+    .buttons Button { margin-right: 1; }
+    DataTable { height: auto; max-height: 1fr; }
+    .form-body { height: auto; max-height: 70%; }
+    .field-label { padding-top: 1; }
+    .field-area { height: 6; }
+    Input, Select { height: 3; }
+    .modal { width: 70; height: auto; padding: 1 2; background: $surface; border: thick $primary; }
+    .modal-wide { width: 90; height: auto; }
+    .modal-title { text-style: bold; padding-bottom: 1; }
+    .modal-buttons { height: auto; padding-top: 1; align: right middle; }
+    .modal-buttons Button { margin-left: 1; }
+    """
+    BINDINGS = [
+        Binding("q", "quit", "退出"),
+        Binding("r", "reload_section", "刷新"),
+        Binding("tab", "focus_next", "焦点", show=True),
+        Binding("shift+tab", "focus_previous", "上一个", show=False),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cache: dict = {}
+        self.current_section = SECTIONS[0][0] if SECTIONS else ""
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Horizontal():
+            with Vertical(id="sidebar"):
+                yield ListView(
+                    *[ListItem(Label(name), id=key) for key, name, _ in SECTIONS],
+                    id="nav",
+                )
+            with Vertical(id="content"):
+                yield Vertical(id="pane")
+        yield Footer()
+
+    async def on_mount(self) -> None:
+        self.query_one("#nav", ListView).focus()
+        await self.show_section(SECTIONS[0][0])
+
+    @on(ListView.Highlighted)
+    async def on_highlight(self, event: ListView.Highlighted) -> None:
+        if event.item and event.item.id:
+            await self.show_section(event.item.id)
+
+    async def show_section(self, key: str) -> None:
+        entry = next((s for s in SECTIONS if s[0] == key), None)
+        if entry is None:
+            return
+        self.current_section = key
+        pane = self.query_one("#pane", Vertical)
+        await pane.remove_children()
+        section = entry[2](self)
+        await pane.mount(section)
+        section.refresh(layout=True)
+        pane.refresh(layout=True)
+
+    async def action_reload_section(self) -> None:
+        for section in self.query(Section):
+            if section.display:
+                await section.reload()
+
+
+def main() -> None:
+    VinputTUI().run()
+
+
+if __name__ == "__main__":
+    main()

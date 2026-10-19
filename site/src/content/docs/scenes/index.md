@@ -74,7 +74,7 @@ Corresponding config:
 
 ### GUI
 
-In Vinput GUI, manage scenes in the **LLM** tab: add, edit prompt, bind provider and model, and configure **Context Lines**.
+In vinput-tui, manage scenes in the **LLM** tab: add, edit prompt, bind provider and model, and configure **Context Lines**.
 
 `context_lines` controls how many previous text lines Vinput sends to the LLM as extra context before rewriting. This is useful for translation, continuation, and style-consistent polishing. Set it to `0` to disable extra context.
 
@@ -156,7 +156,7 @@ Corresponding config:
 
 ### GUI
 
-In Vinput GUI, go to **Resources → LLM Adapters** to browse and install.
+In vinput-tui, go to **Resources → LLM Adapters** to browse and install.
 Manage adapter start/stop and autostart with daemon on the **Control** page.
 
 ### CLI

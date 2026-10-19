@@ -74,7 +74,7 @@ ASR 原始文本 → [场景 prompt + LLM] → 改写后的文本
 
 ### GUI 操作
 
-在 Vinput GUI 的 **LLM** tab 中管理场景：添加、编辑 prompt、绑定 provider 和 model，并设置 **Context Lines**。
+在 vinput-tui 的 **LLM** tab 中管理场景：添加、编辑 prompt、绑定 provider 和 model，并设置 **Context Lines**。
 
 `context_lines` 用来控制 Vinput 在改写前额外发送给 LLM 的前文行数。它适合翻译、续写、段落级润色等依赖附近文本语境的场景。设为 `0` 表示不附带额外上下文。
 
@@ -156,7 +156,7 @@ vinput llm remove <id>                  # 删除
 
 ### GUI 操作
 
-在 Vinput GUI 中进入 **资源 → LLM 适配器**，浏览并安装。
+在 vinput-tui 中进入 **资源 → LLM 适配器**，浏览并安装。
 在 **控制** 页面中管理适配器的启动、停止与是否伴随守护进程自启动。
 
 ### CLI 操作

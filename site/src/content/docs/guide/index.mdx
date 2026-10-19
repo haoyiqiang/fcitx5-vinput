@@ -3,8 +3,6 @@ title: Quick Start
 description: Get up and running with fcitx5-vinput after installation.
 ---
 
-import guiModels from '~/assets/guide/gui-models.png';
-import guiAsrProviders from '~/assets/guide/gui-asr-providers.png';
 
 <div style="position:relative;width:100%;padding-bottom:56.25%;height:0;overflow:hidden;border-radius:8px">
   <iframe src="//player.bilibili.com/player.html?bvid=BV17gXrBGE74&autoplay=0" style="position:absolute;top:0;left:0;width:100%;height:100%" scrolling="no" frameborder="0" allowfullscreen></iframe>
@@ -25,11 +23,9 @@ Open Fcitx5 Configuration → Addons → Find **Vinput** → Enable.
 
 ### 3. Install a model
 
-Open **Vinput GUI** (launch from your application menu, or run `vinput-gui` in a terminal).
+Open **vinput-tui** (launch from your application menu, or run `vinput-tui` in a terminal).
 
-Go to **Resources → Models**, browse the available models list and click **Download** to install one, then click **Use** to activate it.
-
-<img src={guiModels.src} alt="vinput-gui model management" width="720" />
+Use **Local models → Download** to install a model, then **Use** to activate it.
 
 Or use the CLI:
 
@@ -53,9 +49,7 @@ You can also manually place a model directory in `~/.local/share/vinput/models/<
 
 Besides the built-in local model, you can install cloud ASR providers for different speed, quality, or cost trade-offs.
 
-In Vinput GUI, go to **Resources → ASR Providers**, browse available providers and click **Install**. Or use the CLI:
-
-<img src={guiAsrProviders.src} alt="vinput-gui ASR provider management" width="720" />
+Use **ASR providers → Install a provider** in vinput-tui. Or use the CLI:
 
 ```bash
 vinput provider list -a        # List available remote ASR providers

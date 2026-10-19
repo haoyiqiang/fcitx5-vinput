@@ -30,7 +30,6 @@ Guidelines, dual-planning model, and hard constraints for AI coding agents worki
 | **`sherpa-onnx`** (Upstream) | [k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) | External | Upstream local ASR engine: onnxruntime inference, VAD segmentation, offline model runtime. (Context7: `k2-fsa/sherpa-onnx`) |
 | **`pipewire`** (Upstream) | [pipewire/pipewire](https://github.com/pipewire/pipewire) | External | Upstream audio framework: low-latency stream capture, SPA format negotiation, ringbuffers. (Context7: `pipewire/pipewire`) |
 | **`cli11`** (Upstream) | [cliutils/cli11](https://github.com/cliutils/cli11) | External | Upstream CLI framework: modern C++ option validation, subcommand routing. (Context7: `cliutils/cli11`) |
-| **`qt6`** (Upstream) | [qt/qtbase](https://github.com/qt/qtbase) | External | Upstream GUI framework: desktop settings UI, custom item delegates, form layouts. (Context7: `websites/doc_qt_io_qt-6`) |
 
 - **Adding / Modifying Cloud ASR or LLM Scenes**: Work in `~/Code/vinput-registry`.
 - **Packaging / AUR Release Tracking**: Work in `~/Code/aur-auto` (`pkgs/fcitx5-vinput-bin/`).
@@ -237,7 +236,6 @@ Compilation strategy should adapt to local hardware capabilities:
     - **`src/daemon/asr/`**: Must use upstream `sherpa-onnx` C/C++ APIs for recognition and VAD. Prohibited from authoring custom energy-detection or audio-chopping glue wheels. Fetch documentation via `context7_docs(libraryId: "k2-fsa/sherpa-onnx")`.
     - **`src/daemon/audio/`**: Must use upstream PipeWire C API for low-latency stream capture and SPA ringbuffers. Fetch documentation via `context7_docs(libraryId: "pipewire/pipewire")`.
     - **`src/cli/`**: Must follow CLI11 modern C++ validator and subcommand architecture. Fetch documentation via `context7_docs(libraryId: "cliutils/cli11")`.
-    - **`src/gui/`**: Must follow Qt 6 Widgets, Model/View delegates, and layout conventions. Fetch documentation via `context7_docs(libraryId: "websites/doc_qt_io_qt-6")`.
     - Agents must query Context7 before implementing non-trivial changes across these five pillars to prevent hallucinations and maintain upstream parity.
 14. **Semantic Versioning & Release Cadence (语义化版本与发版规范，由 Skill 软约束)**:
     Releases strictly follow `v<MAJOR>.<MINOR>.<PATCH>` (`X.Y.Z` / 主.次.订) governed by agent domain review and `vinput-dev` skill guidelines (without brittle shell AST hooks):

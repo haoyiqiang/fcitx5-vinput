@@ -27,7 +27,7 @@ for lang in en zh_CN; do
     fi
   fi
 
-  for name in vinput.1 vinput-daemon.1 vinput-gui.1 vinput-config.5 fcitx5-vinput.7; do
+  for name in vinput.1 vinput-daemon.1 vinput-config.5 fcitx5-vinput.7; do
     pandoc --from=markdown-smart -s -t man -V date="${man_date}" \
       "${ROOT_DIR}/data/man/${lang}/${name}.md" \
       -o "${ROOT_DIR}/data/man/${lang}/${name}"

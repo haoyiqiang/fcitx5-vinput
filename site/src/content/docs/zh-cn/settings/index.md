@@ -32,7 +32,7 @@ description: 录音设备、增益、VAD 等基础配置。
 
 ### GUI 操作
 
-在 Vinput GUI 的 **控制** 页面选择设备。
+在 vinput-tui 的 **控制** 页面选择设备。
 
 ### CLI 操作
 
@@ -111,7 +111,7 @@ vinput config set /global/duck_output_while_recording true
 vinput config set /global/duck_output_volume 0.25
 ```
 
-以上两项也可在 Vinput GUI 的 **控制** 页面 **音频** 分组中设置。
+以上两项也可在 vinput-tui 的 **控制** 页面 **音频** 分组中设置。
 
 ## 流式识别最大显示列宽
 

@@ -5,7 +5,7 @@ description: "vinput-registry contribution guide: models, providers, and adapter
 
 ## Overview
 
-[vinput-registry](https://github.com/xifan2333/vinput-registry) is a separate repository that hosts all downloadable resources for Vinput: local ASR models, cloud ASR provider scripts, and LLM adapter scripts. When you click **Download** or **Install** in Vinput GUI, or run `vinput model add` / `vinput provider add` / `vinput adapter add`, the resources are fetched from this registry.
+[vinput-registry](https://github.com/xifan2333/vinput-registry) is a separate repository that hosts all downloadable resources for Vinput: local ASR models, cloud ASR provider scripts, and LLM adapter scripts. When you click **Download** or **Install** in vinput-tui, or run `vinput model add` / `vinput provider add` / `vinput adapter add`, the resources are fetched from this registry.
 
 ```
 vinput-registry/

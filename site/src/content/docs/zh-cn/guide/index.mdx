@@ -3,8 +3,6 @@ title: 快速上手
 description: 安装后快速开始使用 fcitx5-vinput。
 ---
 
-import guiModels from '~/assets/guide/gui-models.png';
-import guiAsrProviders from '~/assets/guide/gui-asr-providers.png';
 
 <div style="position:relative;width:100%;padding-bottom:56.25%;height:0;overflow:hidden;border-radius:8px">
   <iframe src="//player.bilibili.com/player.html?bvid=BV17gXrBGE74&autoplay=0" style="position:absolute;top:0;left:0;width:100%;height:100%" scrolling="no" frameborder="0" allowfullscreen></iframe>
@@ -25,11 +23,9 @@ fcitx5 -r
 
 ### 3. 安装模型
 
-打开 **Vinput GUI**（从应用菜单启动，或在终端运行 `vinput-gui`）。
+打开 **vinput-tui**（从应用菜单启动，或在终端运行 `vinput-tui`）。
 
-进入 **资源 → 模型**，在可用模型列表中选择需要的模型，点击 **下载** 安装，然后点击 **使用** 激活。
-
-<img src={guiModels.src} alt="vinput-gui 模型管理" width="720" />
+进入 **本地模型 → 下载安装**，选择需要的模型；安装后回到菜单用 **启用** 激活。
 
 也可以用 CLI：
 
@@ -53,9 +49,7 @@ vinput model use <模型名>        # 设置为当前模型
 
 除了内置的本地模型，还可以安装云端 ASR 提供商，在速度、效果和成本之间灵活选择。
 
-在 Vinput GUI 中进入 **资源 → ASR 提供商**，浏览可用提供商并点击 **安装**。或用 CLI：
-
-<img src={guiAsrProviders.src} alt="vinput-gui ASR 提供商管理" width="720" />
+在 vinput-tui 中进入 **ASR 提供商 → 安装新提供商**。或用 CLI：
 
 ```bash
 vinput provider list -a        # 列出可用远程 ASR 提供商

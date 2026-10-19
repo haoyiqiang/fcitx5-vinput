@@ -44,7 +44,7 @@ Corresponding config:
 
 ### GUI
 
-In Vinput GUI, go to **Resources → Models**:
+In vinput-tui, go to **Resources → Models**:
 
 - **Available models** list: click **Download** to install
 - **Installed models** list: click **Use** to activate, **Remove** to uninstall
@@ -95,7 +95,7 @@ Corresponding config:
 
 ### GUI
 
-In Vinput GUI, go to **Resources → ASR Providers**:
+In vinput-tui, go to **Resources → ASR Providers**:
 
 - Click **Install** to download a provider script
 - After installation, go to the **Control** page to select and edit provider environment variables (e.g. API key)
@@ -139,7 +139,7 @@ Not all models support hotwords — the model list indicates support.
 
 ### GUI
 
-In Vinput GUI, go to the **Hotwords** tab to edit.
+In vinput-tui, go to the **Hotwords** tab to edit.
 
 ### CLI
 

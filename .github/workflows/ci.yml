@@ -41,9 +41,6 @@ jobs:
       - name: Install build dependencies
         run: ./scripts/ci-install-build-deps.sh ubuntu24.04
 
-      - name: Check i18n
-        run: python3 scripts/check-i18n.py
-
       - name: Install sherpa-onnx build runtime
         if: matrix.enable_local_asr == 'ON'
         run: |

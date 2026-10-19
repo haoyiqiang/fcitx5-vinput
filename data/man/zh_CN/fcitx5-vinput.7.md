@@ -67,4 +67,4 @@ fcitx5-vinput - Fcitx5 语音输入架构总览与概念说明
 5. **文字上屏**：在 Fcitx5 候选框中展示识别候选，确认后直接输入到当前焦点窗口。
 
 # 另请参阅
-**vinput**(1), **vinput-daemon**(1), **vinput-gui**(1), **vinput-config**(5), **fcitx5**(1)
+**vinput**(1), **vinput-daemon**(1), **vinput-config**(5), **fcitx5**(1)

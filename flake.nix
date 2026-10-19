@@ -55,7 +55,6 @@
                 gettext
                 fcitx5
                 makeBinaryWrapper
-                qt6.wrapQtAppsHook
                 autoPatchelfHook
               ];
 
@@ -67,7 +66,6 @@
                   libarchive
                   openssl
                   pipewire
-                  qt6.qtbase
                   cli11
                   nlohmann_json
                   clang
@@ -148,8 +146,6 @@
               openssl
               onnxruntime
               pipewire
-              qt6.qtbase
-              qt6.wrapQtAppsHook
               cli11
               sherpa-deps.sherpa-onnx
               nlohmann_json

@@ -32,7 +32,7 @@ Select the microphone input source. Vinput captures audio via PipeWire — this 
 
 ### GUI
 
-In Vinput GUI, select the device on the **Control** page.
+In vinput-tui, select the device on the **Control** page.
 
 ### CLI
 
@@ -119,7 +119,7 @@ vinput config set /global/duck_output_while_recording true
 vinput config set /global/duck_output_volume 0.25
 ```
 
-Both options are also available on the **Control** page in Vinput GUI, under the
+Both options are also available on the **Control** page in vinput-tui, under the
 **Audio** section.
 
 ## Streaming Display Width

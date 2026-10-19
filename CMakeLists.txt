@@ -81,7 +81,7 @@ find_package(LibArchive REQUIRED)
 find_package(OpenSSL REQUIRED)
 
 set(VINPUT_SYSTEMD_USER_DIR
-    "${CMAKE_INSTALL_DATAROOTDIR}/systemd/user"
+    "${CMAKE_INSTALL_LIBDIR}/systemd/user"
     CACHE PATH "Install directory for the vinput systemd --user unit")
 set(VINPUT_DBUS_SERVICE_DIR
     "${CMAKE_INSTALL_DATAROOTDIR}/dbus-1/services"
@@ -119,7 +119,6 @@ install(FILES
 install(FILES
     ${CMAKE_SOURCE_DIR}/data/man/en/vinput.1
     ${CMAKE_SOURCE_DIR}/data/man/en/vinput-daemon.1
-    ${CMAKE_SOURCE_DIR}/data/man/en/vinput-gui.1
     DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
 )
 install(FILES
@@ -134,7 +133,6 @@ install(FILES
 install(FILES
     ${CMAKE_SOURCE_DIR}/data/man/zh_CN/vinput.1
     ${CMAKE_SOURCE_DIR}/data/man/zh_CN/vinput-daemon.1
-    ${CMAKE_SOURCE_DIR}/data/man/zh_CN/vinput-gui.1
     DESTINATION ${CMAKE_INSTALL_MANDIR}/zh_CN/man1
 )
 install(FILES
@@ -144,6 +142,11 @@ install(FILES
 install(FILES
     ${CMAKE_SOURCE_DIR}/data/man/zh_CN/fcitx5-vinput.7
     DESTINATION ${CMAKE_INSTALL_MANDIR}/zh_CN/man7
+)
+
+install(PROGRAMS
+    ${CMAKE_SOURCE_DIR}/scripts/vinput-tui
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 # Install shell completions
@@ -167,7 +170,6 @@ add_subdirectory(src/common)
 add_subdirectory(src/daemon)
 add_subdirectory(src/addon)
 add_subdirectory(src/cli)
-add_subdirectory(src/gui)
 add_subdirectory(po)
 
 include(CTest)
@@ -175,12 +177,8 @@ if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
     add_subdirectory(tests)
 endif()
 
-# Umbrella target that builds every translation artefact (gettext .mo + Qt .qm)
-set(VINPUT_TRANSLATIONS_DEPS gettext-translations)
-if(TARGET qt-translations)
-    list(APPEND VINPUT_TRANSLATIONS_DEPS qt-translations)
-endif()
-add_custom_target(translations ALL DEPENDS ${VINPUT_TRANSLATIONS_DEPS})
+# Umbrella target that builds the gettext .mo translations.
+add_custom_target(translations ALL DEPENDS gettext-translations)
 
 string(REPLACE "-" "~" VINPUT_DEBIAN_UPSTREAM_VERSION "${PROJECT_VERSION}")
 

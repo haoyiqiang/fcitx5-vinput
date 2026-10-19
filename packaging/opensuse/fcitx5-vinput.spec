@@ -34,8 +34,6 @@ BuildRequires:  gettext-tools
 BuildRequires:  pkg-config
 BuildRequires:  fcitx5-devel
 BuildRequires:  nlohmann_json-devel
-BuildRequires:  qt6-base-devel
-BuildRequires:  qt6-tools-devel
 BuildRequires:  libcurl-devel
 BuildRequires:  libopenssl-devel
 BuildRequires:  libarchive-devel
@@ -98,7 +96,6 @@ DESTDIR=%{buildroot} cmake --install build --prefix %{_prefix} --verbose
 %license LICENSE
 %{_bindir}/vinput
 %{_bindir}/vinput-daemon
-%{_bindir}/vinput-gui
 %{_libdir}/fcitx5/fcitx5-vinput.so
 %if %{with local_asr}
 %{_libdir}/fcitx5-vinput/
@@ -108,7 +105,6 @@ DESTDIR=%{buildroot} cmake --install build --prefix %{_prefix} --verbose
 %{_datadir}/systemd/user/vinput-daemon.service
 %{_datadir}/locale/*/LC_MESSAGES/fcitx5-vinput.mo
 %{_datadir}/fcitx5-vinput/
-%{_datadir}/applications/vinput-gui.desktop
 %{_datadir}/icons/hicolor/
 %{_mandir}/man*/*
 %{_mandir}/*/man*/*

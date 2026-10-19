@@ -42,7 +42,6 @@ See [AGENTS.md](AGENTS.md) for full architecture, dual-planning model, compilati
   - `src/daemon/asr/`: sherpa-onnx (`k2-fsa/sherpa-onnx`)
   - `src/daemon/audio/`: PipeWire (`pipewire/pipewire`)
   - `src/cli/`: CLI11 (`cliutils/cli11`)
-  - `src/gui/`: Qt 6 (`websites/doc_qt_io_qt-6`)
   - Query Context7 before modifying these pillars to maintain upstream compatibility.
 - **Notification Specification (`notification.json`)**:
   - *Breaking Changes*: "Prompt for Agent" with target version, `vinput init -f`, and `vinput config migrate [--dry-run]`. Do not list per-key recipes. Retain across 5 patch releases (or until next minor).

@@ -34,11 +34,6 @@ BuildRequires:  gettext
 BuildRequires:  cmake(Fcitx5Core)
 BuildRequires:  cmake(Fcitx5Config)
 BuildRequires:  cmake(nlohmann_json) >= 3.2.0
-BuildRequires:  cmake(Qt6Core)
-BuildRequires:  cmake(Qt6Gui)
-BuildRequires:  cmake(Qt6Widgets)
-BuildRequires:  cmake(Qt6Network)
-BuildRequires:  cmake(Qt6LinguistTools)
 BuildRequires:  pkgconfig(libcurl)
 BuildRequires:  pkgconfig(openssl)
 BuildRequires:  pkgconfig(libarchive)
@@ -50,7 +45,6 @@ Requires:       fcitx5
 Requires:       pipewire
 Requires:       curl
 Requires:       systemd
-Requires:       qt6-qtbase
 Recommends:     wireplumber
 
 %description
@@ -93,7 +87,6 @@ bash scripts/build-sherpa-onnx.sh %{sherpa_onnx_ver} %{_builddir}/sherpa-onnx-in
 %license LICENSE
 %{_bindir}/vinput
 %{_bindir}/vinput-daemon
-%{_bindir}/vinput-gui
 %{_libdir}/fcitx5/fcitx5-vinput.so
 %if %{with local_asr}
 %{_libdir}/fcitx5-vinput/
@@ -103,7 +96,6 @@ bash scripts/build-sherpa-onnx.sh %{sherpa_onnx_ver} %{_builddir}/sherpa-onnx-in
 %{_datadir}/systemd/user/vinput-daemon.service
 %{_datadir}/locale/*/LC_MESSAGES/fcitx5-vinput.mo
 %{_datadir}/fcitx5-vinput/
-%{_datadir}/applications/vinput-gui.desktop
 %{_datadir}/icons/hicolor/
 %{_mandir}/man*/*
 %{_mandir}/*/man*/*

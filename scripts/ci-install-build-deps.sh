@@ -12,31 +12,6 @@ if [[ ${EUID} -ne 0 ]]; then
   sudo_cmd=(sudo)
 fi
 
-install_qt_apt() {
-  "${sudo_cmd[@]}" apt-get install -y \
-    qt6-base-dev \
-    qt6-tools-dev \
-    qt6-tools-dev-tools
-}
-
-install_qt_dnf() {
-  "${sudo_cmd[@]}" dnf install -y --setopt=install_weak_deps=False \
-    qt6-qtbase-devel \
-    qt6-qttools-devel
-}
-
-install_qt_pacman() {
-  pacman -S --noconfirm --needed \
-    qt6-base \
-    qt6-tools
-}
-
-install_qt_zypper() {
-  "${sudo_cmd[@]}" zypper --non-interactive install --no-recommends \
-    qt6-base-devel \
-    qt6-tools-devel
-}
-
 case "${target}" in
 ubuntu24.04)
   "${sudo_cmd[@]}" apt-get update
@@ -71,7 +46,6 @@ ubuntu24.04)
     fcitx5-modules-dev \
     libcli11-dev \
     nlohmann-json3-dev
-  install_qt_apt
   ;;
 debian12)
   apt-get update
@@ -106,7 +80,6 @@ debian12)
     fcitx5-modules-dev \
     libcli11-dev \
     nlohmann-json3-dev
-  install_qt_apt
   ;;
 fedora43)
   # Avoid weak deps that can pull packages from the Cisco openh264 repo,
@@ -129,7 +102,6 @@ fedora43)
     fcitx5-devel \
     nlohmann-json-devel \
     cli11-devel
-  install_qt_dnf
   ;;
 opensuse-leap)
   "${sudo_cmd[@]}" zypper --non-interactive addrepo --refresh \
@@ -162,7 +134,6 @@ opensuse-leap)
     fcitx5-devel \
     cli11-devel \
     nlohmann_json-devel
-  install_qt_zypper
   ;;
 archlinux)
   pacman -Syu --noconfirm --needed \
@@ -181,7 +152,6 @@ archlinux)
     pkgconf \
     sccache \
     systemd
-  install_qt_pacman
   ;;
 *)
   echo "unsupported target: ${target}" >&2
